@@ -27,13 +27,13 @@ db = firestore.client()  # This initializes Firestore
 
 # Pyrebase (for client-side authentication)
 firebase_config = {
-    "apiKey": "AIzaSyApRzFpyWco9P1KCbH_WbIx603tBgWQyZ8",
-    "authDomain": "smart-dash-544637.firebaseapp.com",
-    "databaseURL": "https://smart-dash-544637-default-rtdb.firebaseio.com",  # Required by Pyrebase
-    "projectId": "smart-dash-544637",
-    "storageBucket": "smart-dash-544637.firebasestorage.app",
-    "messagingSenderId": "59772427660",
-    "appId": "1:59772427660:web:e4747b18ff740547430aa9"
+    "apiKey": "AIzaSyDUMMY-KEY1234567890FAKEKEYEXAMPLE",
+    "authDomain": "fake-project-123456.firebaseapp.com",
+    "databaseURL": "https://fake-project-123456-default-rtdb.firebaseio.com",  # Required by Pyrebase
+    "projectId": "fake-project-123456",
+    "storageBucket": "fake-project-123456.appspot.com",
+    "messagingSenderId": "123456789012",
+    "appId": "1:123456789012:web:abcdef1234567890abcdef"
 }
 firebase = pyrebase.initialize_app(firebase_config)
 auth_client = firebase.auth()
