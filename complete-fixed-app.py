@@ -103,7 +103,8 @@ class Dashboard:
                                             {'label': 'Bar Chart', 'value': 'bar'},
                                             {'label': 'Box Plot', 'value': 'box'},
                                             {'label': 'Histogram', 'value': 'histogram'},
-                                            {'label': 'Heatmap', 'value': 'heatmap'}
+                                            {'label': 'Heatmap', 'value': 'heatmap'},
+                                            {'label': 'Pie Chart', 'value': 'pie'}
                                         ],
                                         value='scatter'
                                     ),
@@ -153,24 +154,47 @@ class Dashboard:
             return None
     
     def detect_data_types(self, df):
-        """Detect and categorize column types"""
+        """Detect and categorize column types with improved support for sales data"""
         data_types = {
             'numeric': [],
             'categorical': [],
             'datetime': [],
-            'text': []
+            'text': [],
+            'sales': [],  # New type for sales-related columns
+            'product': []  # New type for product-related columns
         }
         
+        # First pass - identify basic types
         for column in df.columns:
+            # Check for sales-related columns by name
+            sales_keywords = ['sales', 'revenue', 'amount', 'price', 'total', 'volume', 'quantity', 'units']
+            product_keywords = ['product', 'brand', 'item', 'category', 'type', 'beverage']
+            
+            col_lower = column.lower()
+            
             # Check if column name contains date-related keywords
             date_keywords = ['date', 'time', 'year', 'month', 'day']
-            if any(keyword in column.lower() for keyword in date_keywords):
+            if any(keyword in col_lower for keyword in date_keywords):
                 try:
                     pd.to_datetime(df[column])
                     data_types['datetime'].append(column)
                     continue
                 except:
                     pass
+            
+            # Check for sales/revenue columns
+            if any(keyword in col_lower for keyword in sales_keywords):
+                if pd.api.types.is_numeric_dtype(df[column]):
+                    data_types['sales'].append(column)
+                    data_types['numeric'].append(column)  # Also add to numeric for compatibility
+                    continue
+            
+            # Check for product/category columns
+            if any(keyword in col_lower for keyword in product_keywords):
+                data_types['product'].append(column)
+                if df[column].nunique() < len(df) * 0.5:  # If relatively few unique values
+                    data_types['categorical'].append(column)
+                continue
             
             # Check for numeric columns
             if pd.api.types.is_numeric_dtype(df[column]):
@@ -291,23 +315,23 @@ class Dashboard:
         return html.Div(summaries)
 
     def create_visualization(self, df, viz_type, x_col, y_col, color_col=None):
-        """Create visualization based on selected parameters"""
+        """Create visualization based on selected parameters with added pie chart support"""
         try:
             if viz_type == 'scatter':
                 fig = px.scatter(df, x=x_col, y=y_col, color=color_col,
-                               title=f"Scatter Plot: {y_col} vs {x_col}")
+                            title=f"Scatter Plot: {y_col} vs {x_col}")
             elif viz_type == 'line':
                 fig = px.line(df, x=x_col, y=y_col, color=color_col,
                             title=f"Line Plot: {y_col} vs {x_col}")
             elif viz_type == 'bar':
                 fig = px.bar(df, x=x_col, y=y_col, color=color_col,
-                           title=f"Bar Chart: {y_col} by {x_col}")
+                        title=f"Bar Chart: {y_col} by {x_col}")
             elif viz_type == 'box':
                 fig = px.box(df, x=x_col, y=y_col, color=color_col,
-                           title=f"Box Plot: {y_col} by {x_col}")
+                        title=f"Box Plot: {y_col} by {x_col}")
             elif viz_type == 'histogram':
                 fig = px.histogram(df, x=x_col, color=color_col,
-                                 title=f"Histogram of {x_col}")
+                                title=f"Histogram of {x_col}")
             elif viz_type == 'heatmap':
                 if y_col and color_col:
                     corr = df[[x_col, y_col, color_col]].corr()
@@ -317,6 +341,32 @@ class Dashboard:
                     # For histogram only x is required
                     corr = df[x_col].corr(df[x_col])
                 fig = px.imshow(corr, title="Correlation Heatmap")
+            elif viz_type == 'pie':
+                # For pie charts: x_col is categories, y_col is values
+                if y_col:
+                    # If we have values column, use it
+                    if df[x_col].nunique() > 15:
+                        # If too many categories, take top 10
+                        grouped = df.groupby(x_col)[y_col].sum().nlargest(10).reset_index()
+                        fig = px.pie(grouped, values=y_col, names=x_col, 
+                                    title=f"Distribution of {y_col} by {x_col} (Top 10)")
+                    else:
+                        # Use all categories if reasonable number
+                        grouped = df.groupby(x_col)[y_col].sum().reset_index()
+                        fig = px.pie(grouped, values=y_col, names=x_col,
+                                    title=f"Distribution of {y_col} by {x_col}")
+                else:
+                    # If no values column provided, use count
+                    if df[x_col].nunique() > 15:
+                        # If too many categories, take top 10
+                        value_counts = df[x_col].value_counts().nlargest(10)
+                        fig = px.pie(values=value_counts.values, names=value_counts.index,
+                                    title=f"Distribution of {x_col} (Top 10)")
+                    else:
+                        # Use all categories if reasonable number
+                        value_counts = df[x_col].value_counts()
+                        fig = px.pie(values=value_counts.values, names=value_counts.index,
+                                    title=f"Distribution of {x_col}")
             
             fig.update_layout(
                 template='plotly_white',
@@ -328,100 +378,379 @@ class Dashboard:
             return html.Div(f"Error creating visualization: {str(e)}")
 
     def suggest_visualizations(self, df):
-        """Suggest the most appropriate visualizations based on data analysis"""
+        """Suggests visualizations with high accuracy, tailored for various datasets."""
+
         data_types = self.detect_data_types(df)
-        
         suggestions = [html.H4("Recommended Visualizations", className="mb-4")]
         recommendations = []
 
-        # 1. Time Series Analysis
-        if data_types['datetime'] and data_types['numeric']:
-            datetime_col = data_types['datetime'][0]
-            numeric_col = data_types['numeric'][0]
-            try:
-                fig = px.line(df, x=datetime_col, y=numeric_col, title=f"Time Series: {numeric_col} Over Time")
-                fig.update_layout(template='plotly_white')
-                recommendations.append({
-                    'score': 1.0,
-                    'component': dbc.Card(dbc.CardBody([
-                        html.H5("Recommended: Time Series Analysis"),
-                        html.P(f"This visualization shows how {numeric_col} changes over time."),
-                        dcc.Graph(figure=fig)
-                    ]), className="mb-4")
-                })
-            except Exception as e:
-                print(f"Error creating time series visualization: {str(e)}")
+        def is_nominal_or_ordinal(col):
+            """Enhanced check for nominal/ordinal categorical data."""
+            return (
+                pd.api.types.is_categorical_dtype(df[col])
+                or df[col].dtype == "object"
+                and 2 <= df[col].nunique() <= 30  # More restrictive
+            )
 
-        # 2. Correlation Analysis
-        if len(data_types['numeric']) > 1:
-            try:
-                corr = df[data_types['numeric']].corr()
-                corr_matrix = abs(corr)
-                np.fill_diagonal(corr_matrix.values, 0)
-                max_corr = corr_matrix.max().max()
-                if max_corr > 0.5:
-                    max_corr_pair = np.where(corr_matrix == max_corr)
-                    var1, var2 = corr.index[max_corr_pair[0][0]], corr.index[max_corr_pair[1][0]]
-                    fig = px.scatter(df, x=var1, y=var2, title=f"Correlation: {var1} vs {var2}")
-                    fig.update_layout(template='plotly_white')
-                    recommendations.append({
-                        'score': 0.9,
-                        'component': dbc.Card(dbc.CardBody([
-                            html.H5("Recommended: Correlation Analysis"),
-                            html.P(f"Strong correlation detected between {var1} and {var2}."),
-                            dcc.Graph(figure=fig)
-                        ]), className="mb-4")
-                    })
-            except Exception as e:
-                print(f"Error creating correlation analysis: {str(e)}")
+        def is_quantitative(col):
+            """Robust check for quantitative data."""
+            return pd.api.types.is_numeric_dtype(df[col])
 
-        # 3. Distribution Analysis for first numeric column
-        if data_types['numeric']:
+        def is_temporal(col):
+            """Reliable check for temporal data."""
             try:
-                col = data_types['numeric'][0]  # Just do the first one to keep it simple
-                fig = px.histogram(df, x=col, title=f"Distribution of {col}")
-                fig.update_layout(template='plotly_white')
-                recommendations.append({
-                    'score': 0.8,
-                    'component': dbc.Card(dbc.CardBody([
-                        html.H5(f"Recommended: Distribution Analysis"),
-                        html.P(f"This histogram shows the distribution of {col}."),
-                        dcc.Graph(figure=fig)
-                    ]), className="mb-4")
-                })
-            except Exception as e:
-                print(f"Error creating distribution analysis: {str(e)}")
+                pd.to_datetime(df[col], errors="raise")
+                return True
+            except ValueError:
+                return False
 
-        # 4. Heatmap for Correlation Matrix
-        if len(data_types['numeric']) > 2:
+        def is_year_like(col):
+            """Check if a numeric column might represent years."""
+            if is_quantitative(col):
+                min_val = df[col].min()
+                max_val = df[col].max()
+                if (
+                    min_val >= 1900
+                    and max_val <= 2050
+                    and df[col].nunique() <= 50
+                ):  # Reasonable year range and limited unique values
+                    return True
+            return False
+
+        def calculate_entropy(series):
+            """Calculate entropy to measure data diversity."""
+            probabilities = series.value_counts(normalize=True)
+            return -np.sum(probabilities * np.log2(probabilities + 1e-10))
+
+        def calculate_correlation(df, col1, col2):
+            """Calculate correlation between two quantitative columns."""
             try:
-                # Limit to first 10 numeric columns to prevent oversized heatmaps
-                numeric_cols = data_types['numeric'][:10] 
-                corr = df[numeric_cols].corr()
-                fig = px.imshow(corr, text_auto=True, title="Correlation Heatmap")
-                fig.update_layout(template='plotly_white')
-                recommendations.append({
-                    'score': 0.7,
-                    'component': dbc.Card(dbc.CardBody([
-                        html.H5("Recommended: Correlation Heatmap"),
-                        html.P("This heatmap shows the correlation between numeric columns."),
-                        dcc.Graph(figure=fig)
-                    ]), className="mb-4")
-                })
+                return abs(df[col1].corr(df[col2]))
+            except ValueError:  # Handle cases where correlation can't be computed
+                return 0
+
+        # Color palettes
+        categorical_colors = px.colors.qualitative.Set2
+        sequential_colors = px.colors.sequential.Blues
+        diverging_colors = px.colors.diverging.RdYlGn
+
+        # 0. Pie Charts: Precise Part-to-Whole (Color remains the same)
+        if any(is_nominal_or_ordinal(col) for col in df.columns) and any(
+            is_quantitative(col) for col in df.columns
+        ):
+            try:
+                best_category_col = None
+                best_value_col = None
+                max_entropy = -1
+
+                for cat_col in df.columns:
+                    if (
+                        is_nominal_or_ordinal(cat_col)
+                        and 2 <= df[cat_col].nunique() <= 10  # Very strict
+                    ):
+                        entropy = calculate_entropy(df[cat_col])
+                        if entropy > max_entropy:
+                            max_entropy = entropy
+                            best_category_col = cat_col
+
+                if best_category_col:
+                    for val_col in df.columns:
+                        if is_quantitative(val_col):
+                            if (
+                                df[val_col].nunique() > 10
+                            ):  # Quantitative should have enough variance
+                                best_value_col = val_col
+                                break
+
+                if best_category_col and best_value_col:
+                    fig = px.pie(
+                        df,
+                        names=best_category_col,
+                        values=best_value_col,
+                        title=f"Distribution of {best_value_col} by {best_category_col}",
+                        color_discrete_sequence=categorical_colors,  # Color
+                    )
+                    fig.update_layout(template="plotly_white")
+                    recommendations.append(
+                        {
+                            "score": 0.97,  # Highest score
+                            "component": dbc.Card(
+                                dbc.CardBody(
+                                    [
+                                        html.H5(
+                                            f"Recommended: {best_value_col} by {best_category_col}"
+                                        ),
+                                        html.P(
+                                            f"Part-to-whole relationship of {best_value_col} across {best_category_col}."
+                                        ),
+                                        dcc.Graph(figure=fig),
+                                    ]
+                                ),
+                                className="mb-4",
+                            ),
+                        }
+                    )
+            except Exception as e:
+                print(f"Error creating pie chart: {str(e)}")
+
+        # 1. Time Series: Accurate Trend Analysis (Color remains the same)
+        if sum(is_temporal(col) for col in df.columns) == 1 and sum(
+            is_quantitative(col) for col in df.columns
+        ) == 1:  # Exactly one of each
+            try:
+                time_col = next(col for col in df.columns if is_temporal(col))
+                value_col = next(col for col in df.columns if is_quantitative(col))
+
+                # Further checks for time series suitability
+                if df[time_col].nunique() > 10:  # Enough time points
+                    fig = px.line(
+                        df, x=time_col, y=value_col, title=f"Time Series of {value_col}",
+                        color_discrete_sequence=[sequential_colors[5]],  # Color
+                    )
+                    fig.update_layout(template="plotly_white")
+                    recommendations.append(
+                        {
+                            "score": 0.96,  # High score
+                            "component": dbc.Card(
+                                dbc.CardBody(
+                                    [
+                                        html.H5("Recommended: Time Series"),
+                                        html.P(f"Trends of {value_col} over time."),
+                                        dcc.Graph(figure=fig),
+                                    ]
+                                ),
+                                className="mb-4",
+                            ),
+                        }
+                    )
+            except Exception as e:
+                print(f"Error creating time series: {str(e)}")
+
+        # 2. Bar Charts: Precise Category Comparison (Coloring with Graph Objects)
+        if any(is_nominal_or_ordinal(col) for col in df.columns) and any(
+            is_quantitative(col) for col in df.columns
+        ):
+            try:
+                best_category_col = None
+                best_value_col = None
+                max_categories = 15  # Reasonable limit
+
+                for cat_col in df.columns:
+                    if is_nominal_or_ordinal(cat_col) or is_year_like(
+                        cat_col
+                    ):  # Include year-like
+                        if (
+                            2 <= df[cat_col].nunique() <= max_categories
+                        ):  # Within limits
+                            best_category_col = cat_col
+                            break  # Take first suitable
+
+                if best_category_col:
+                    for val_col in df.columns:
+                        if is_quantitative(val_col):
+                            best_value_col = val_col
+                            break  # Take first suitable
+
+                if best_category_col and best_value_col:
+                    num_categories = df[best_category_col].nunique()
+
+                    # Smart Color Selection
+                    if num_categories <= 10:
+                        color_sequence = categorical_colors  # Use categorical palette
+                    elif num_categories <= 20:
+                        color_sequence = px.colors.qualitative.Dark24  # More colors
+                    else:
+                        color_sequence = px.colors.qualitative.Plotly  # Distinct, but not too harsh
+
+                    # Create Plotly Graph Objects figure
+                    import plotly.graph_objects as go
+                    fig = go.Figure(
+                        data=[
+                            go.Bar(
+                                x=df[best_category_col],
+                                y=df[best_value_col],
+                                marker_color=color_sequence[:num_categories], # Explicit color list
+                            )
+                        ]
+                    )
+
+                    fig.update_layout(
+                        title=f"{best_value_col} by {best_category_col}",
+                        template="plotly_white",
+                        showlegend=False,  # Legend not needed for simple bar
+                    )
+
+                    recommendations.append(
+                        {
+                            "score": 0.95,
+                            "component": dbc.Card(
+                                dbc.CardBody(
+                                    [
+                                        html.H5("Recommended: Bar Chart"),
+                                        html.P(
+                                            f"Comparison of {best_value_col} across {best_category_col}."
+                                        ),
+                                        dcc.Graph(figure=fig),
+                                    ]
+                                ),
+                                className="mb-4",
+                            ),
+                        }
+                    )
+            except Exception as e:
+                print(f"Error creating bar chart: {str(e)}")
+
+        # 3. Scatter Plots: Accurate Correlation (Retail Focused) (Color remains the same)
+        if sum(is_quantitative(col) for col in df.columns) >= 2:
+            try:
+                quantitative_cols = [
+                    col for col in df.columns if is_quantitative(col)
+                ]
+                highest_corr = 0
+                best_col1 = None
+                best_col2 = None
+
+                # Retail-specific column names (adjust as needed)
+                retail_keywords = [
+                    "price",
+                    "cost",
+                    "revenue",
+                    "sales",
+                    "quantity",
+                    "discount",
+                    "profit",
+                ]
+
+                # Prioritize retail-related columns
+                retail_cols = [
+                    col
+                    for col in quantitative_cols
+                    if any(keyword in col.lower() for keyword in retail_keywords)
+                ]
+                non_retail_cols = [
+                    col for col in quantitative_cols if col not in retail_cols
+                ]
+
+                # If we have retail cols, prioritize those
+                cols_to_use = retail_cols if retail_cols else quantitative_cols
+
+                for i in range(len(cols_to_use)):
+                    for j in range(i + 1, len(cols_to_use)):
+                        corr = calculate_correlation(
+                            df, cols_to_use[i], cols_to_use[j]
+                        )
+                        if corr > highest_corr and corr > 0.5:  # Threshold
+                            highest_corr = corr
+                            best_col1 = cols_to_use[i]
+                            best_col2 = cols_to_use[j]
+
+                if best_col1 and best_col2:
+                    fig = px.scatter(
+                        df,
+                        x=best_col1,
+                        y=best_col2,
+                        title=f"Relationship: {best_col1} vs {best_col2}",
+                        color_discrete_sequence=[sequential_colors[7]],  # Color
+                    )
+                    fig.update_layout(template="plotly_white")
+                    recommendations.append(
+                        {
+                            "score": 0.94,
+                            "component": dbc.Card(
+                                dbc.CardBody(
+                                    [
+                                        html.H5("Recommended: Scatter Plot"),
+                                        html.P(
+                                            f"Correlation between {best_col1} and {best_col2}."
+                                        ),
+                                        dcc.Graph(figure=fig),
+                                    ]
+                                ),
+                                className="mb-4",
+                            ),
+                        }
+                    )
+            except Exception as e:
+                print(f"Error creating scatter: {str(e)}")
+
+        # 4. Histograms: Distribution Analysis (Color remains the same)
+        if sum(is_quantitative(col) for col in df.columns) == 1:
+            try:
+                quantitative_col = next(
+                    col for col in df.columns if is_quantitative(col)
+                )
+                fig = px.histogram(
+                    df, x=quantitative_col, title=f"Distribution of {quantitative_col}",
+                    color_discrete_sequence=[sequential_colors[3]],  # Color
+                )
+                fig.update_layout(template="plotly_white")
+                recommendations.append(
+                    {
+                        "score": 0.85,
+                        "component": dbc.Card(
+                            dbc.CardBody(
+                                [
+                                    html.H5("Recommended: Histogram"),
+                                    html.P(f"Distribution of values in {quantitative_col}."),
+                                    dcc.Graph(figure=fig),
+                                ]
+                            ),
+                            className="mb-4",
+                        )
+                    }
+                )
+            except Exception as e:
+                print(f"Error creating histogram: {str(e)}")
+
+        # 5. Heatmap: Correlation Matrix (Selective) (Color remains the same)
+        if sum(is_quantitative(col) for col in df.columns) > 2:
+            try:
+                quantitative_cols = [
+                    col for col in df.columns if is_quantitative(col)
+                ]
+                # Limit for heatmap
+                num_cols_for_heatmap = quantitative_cols[: min(10, len(quantitative_cols))]
+                corr = df[num_cols_for_heatmap].corr()
+                if (
+                    abs(corr.values).max() > 0.6
+                ):  # Strong correlation somewhere - important
+                    fig = px.imshow(corr, text_auto=True, title="Correlation Heatmap",
+                                   color_continuous_scale=diverging_colors)  # Color
+                    fig.update_layout(template="plotly_white")
+                    recommendations.append(
+                        {
+                            "score": 0.82,
+                            "component": dbc.Card(
+                                dbc.CardBody(
+                                    [
+                                        html.H5("Recommended: Correlation Heatmap"),
+                                        html.P(
+                                            "Heatmap of correlations between quantitative variables."
+                                        ),
+                                        dcc.Graph(figure=fig),
+                                    ]
+                                ),
+                                className="mb-4",
+                            ),
+                        }
+                    )
             except Exception as e:
                 print(f"Error creating heatmap: {str(e)}")
 
-        # Sort recommendations by score
-        recommendations.sort(key=lambda x: x['score'], reverse=True)
+        # Finalize and Filter
+        recommendations.sort(key=lambda x: x["score"], reverse=True)
+        final_recommendations = [
+            rec["component"] for rec in recommendations if rec["score"] > 0.90
+        ]  # Higher threshold
+        final_recommendations = final_recommendations[:3]  # Top 3
 
-        # Add recommendations to suggestions
-        if recommendations:
-            suggestions.extend([rec['component'] for rec in recommendations])
+        if final_recommendations:
+            suggestions.extend(final_recommendations)
         else:
             suggestions.append(
                 dbc.Alert(
-                    "No strong patterns detected. Try exploring the data manually.",
-                    color="warning"
+                    "No significant patterns found. Explore data manually.",
+                    color="info",
                 )
             )
 
@@ -603,8 +932,13 @@ class Dashboard:
                         
                         # Create a simple summary
                         summary = f"Dataset with {self.df.shape[0]} rows, {self.df.shape[1]} columns. "
-                        if y_col:
-                            summary += f"Visualization: {viz_type} of {y_col} vs {x_col}"
+                        if viz_type == 'pie':
+                            if y_col:
+                                summary += f"Visualization: {viz_type} chart of {y_col} by {x_col}"
+                            else:
+                                summary += f"Visualization: {viz_type} chart of {x_col} distribution"
+                        elif y_col:
+                            summary += f"Visualization: {viz_type} of {y_col} vs {x_col}" 
                         else:
                             summary += f"Visualization: {viz_type} of {x_col}"
 

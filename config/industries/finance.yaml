@@ -1,0 +1,13 @@
+name: FINANCE
+axis_patterns:
+  CURRENCY:
+    keywords:
+      - revenue
+      - expenses
+chart_patterns:
+  trend_analysis:
+    required_axes:
+      - type: TIME
+      - type: CURRENCY
+    confidence_threshold: 0.75
+    chart_type: line
